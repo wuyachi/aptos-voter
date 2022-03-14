@@ -23,8 +23,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"math/rand"
-	"strconv"
 	"time"
 
 	sdk "github.com/polynetwork/poly-go-sdk"
@@ -214,16 +214,13 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 			var dstChainId uint64
 			var dstAddress []byte
 			for _, memo := range payment.Memos {
-				if memo.Memo.MemoType.String() == "DstChainID" {
-					id, err := strconv.Atoi(memo.Memo.MemoData.String())
-					if err != nil {
-						log.Errorf("fetchLockDepositEventByTxHash: cannot parse dst chain id: %s, txHash is: %s",
-							memo.Memo.MemoData.String(), tx.GetHash().String())
-						continue
-					}
-					dstChainId = uint64(id)
+				//636861696E6964 means chainid
+				if memo.Memo.MemoType.String() == "636861696E6964" {
+					id := new(big.Int).SetBytes(memo.Memo.MemoData.Bytes())
+					dstChainId = id.Uint64()
 				}
-				if memo.Memo.MemoType.String() == "DstAddress" {
+				//61646472657373 means address
+				if memo.Memo.MemoType.String() == "61646472657373" {
 					dstAddress = memo.Memo.MemoData.Bytes()
 				}
 			}
@@ -231,8 +228,6 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 			if dstChainId == 0 || l == 0 {
 				return fmt.Errorf("fetchLockDepositEventByTxHash: cross chain info is empty, txHash is: %s", tx.GetHash().String())
 			}
-
-			// TODO: add asset bind
 			toContractAddress, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(), []byte{})
 			if err != nil {
 				return fmt.Errorf("fetchLockDepositTx: get to asset contract address error:%s, dst chain id: %d, txHash is: %s",
@@ -306,16 +301,13 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 				var dstChainId uint64
 				var dstAddress []byte
 				for _, memo := range payment.Memos {
-					if memo.Memo.MemoType.String() == "DstChainID" {
-						id, err := strconv.Atoi(memo.Memo.MemoData.String())
-						if err != nil {
-							log.Errorf("fetchLockDepositTx: cannot parse dst chain id: %s, txHash is: %s",
-								memo.Memo.MemoData.String(), txData.GetHash().String())
-							continue
-						}
-						dstChainId = uint64(id)
+					//636861696E6964 means chainid
+					if memo.Memo.MemoType.String() == "636861696E6964" {
+						id := new(big.Int).SetBytes(memo.Memo.MemoData.Bytes())
+						dstChainId = id.Uint64()
 					}
-					if memo.Memo.MemoType.String() == "DstAddress" {
+					//61646472657373 means address
+					if memo.Memo.MemoType.String() == "61646472657373" {
 						dstAddress = memo.Memo.MemoData.Bytes()
 					}
 				}
@@ -324,8 +316,6 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 					log.Errorf("fetchLockDepositTx: cross chain info is empty, txHash is: %s", txData.GetHash().String())
 					continue
 				}
-
-				// TODO: add asset bind
 				toContractAddress, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(), []byte{})
 				if err != nil {
 					log.Errorf("fetchLockDepositTx: get to asset contract address error:%s, dst chain id: %d, txHash is: %s",

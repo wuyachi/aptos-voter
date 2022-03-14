@@ -12,8 +12,11 @@
 *.out
 
 .idea
-
+config*.json
+polywallet
 ripple-voter
+Log
+db
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
