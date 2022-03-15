@@ -330,9 +330,10 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 						err, txData.MetaData.DeliveredAmount.String(), txData.GetHash().String())
 					continue
 				}
+				amount := new(big.Int).SetUint64(uint64(native.Float() * 1000000))
 				sink := common.NewZeroCopySink(nil)
 				sink.WriteVarBytes(dstAddress)
-				sink.WriteBytes(native.Bytes())
+				sink.WriteString(amount.String())
 
 				param := &common2.MakeTxParam{
 					TxHash:              txData.GetHash().Bytes(),
