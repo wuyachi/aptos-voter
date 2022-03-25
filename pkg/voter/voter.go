@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/polynetwork/poly/native/service/governance/side_chain_manager"
 	"math/big"
 	"math/rand"
 	"time"
@@ -181,6 +182,66 @@ func (v *Voter) StartVoter(ctx context.Context) {
 	}
 }
 
+func (v *Voter) FeeScan(ctx context.Context) {
+	ticker := time.NewTicker(time.Second * 10)
+	for {
+		select {
+		case <-ticker.C:
+			fee, err := v.rippleSdk.GetRpcClient().GetFee()
+			if err != nil {
+				log.Errorf("FeeScan: ripple GetFee failed:%v", err)
+				continue
+			}
+			// get poly ripple fee
+			polyFee := &side_chain_manager.Fee{
+				Fee: new(big.Int),
+			}
+			raw, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(),
+				append([]byte(side_chain_manager.FEE), autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)...))
+			if err != nil {
+				log.Errorf("FeeScan: poly getStorage error: %s", err)
+				continue
+			}
+			if len(raw) != 0 {
+				if err := polyFee.Deserialization(common.NewZeroCopySource(raw)); err != nil {
+					log.Errorf("FeeScan: deserialize, deserialize poly fee error: %s", err)
+					continue
+				}
+			}
+			rippleFee, err := fee.Drops.OpenLedgerFee.NonNative()
+			if err != nil {
+				log.Errorf("FeeScan: fee.Drops.OpenLedgerFee.NonNative error: %s", err)
+				continue
+			}
+			log.Infof("FeeScan: ripple fee: %s, poly fee: %s, view: %d", rippleFee.String(),
+				polyFee.Fee.String(), polyFee.View)
+
+			if uint64(rippleFee.Float()) > polyFee.Fee.Uint64()*4/5 ||
+				uint64(rippleFee.Float()) < polyFee.Fee.Uint64()/20 {
+				newFee, ok := new(big.Int).SetString(rippleFee.String(), 10)
+				if !ok {
+					log.Errorf("FeeScan: parse open ledger fee error")
+					continue
+				}
+				txHash, err := v.updateFee(polyFee.View, newFee)
+				if err != nil {
+					log.Errorf("FeeScan: updateFee failed:%v", err)
+					continue
+				}
+				err = v.waitTx(txHash)
+				if err != nil {
+					log.Errorf("FeeScan: waitTx failed:%v", err)
+					continue
+				}
+			}
+
+		case <-ctx.Done():
+			log.Info("quiting from signal...")
+			return
+		}
+	}
+}
+
 type CrossTransfer struct {
 	txIndex string
 	txId    []byte
@@ -235,14 +296,14 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 			}
 
 			// create args
-			native, err := tx.MetaData.DeliveredAmount.Native()
+			nonNative, err := tx.MetaData.DeliveredAmount.NonNative()
 			if err != nil {
-				return fmt.Errorf("fetchLockDepositEventByTxHash: value parse to native error:%s, amount is: %s, txHash is: %s",
+				return fmt.Errorf("fetchLockDepositEventByTxHash: value parse to non native error:%s, amount is: %s, txHash is: %s",
 					err, tx.MetaData.DeliveredAmount.String(), tx.GetHash().String())
 			}
 			sink := common.NewZeroCopySink(nil)
 			sink.WriteVarBytes(dstAddress)
-			sink.WriteBytes(native.Bytes())
+			sink.WriteString(nonNative.String())
 
 			param := &common2.MakeTxParam{
 				TxHash:              tx.GetHash().Bytes(),
@@ -324,16 +385,15 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 				}
 
 				// create args
-				native, err := txData.MetaData.DeliveredAmount.Native()
+				nonNative, err := txData.MetaData.DeliveredAmount.NonNative()
 				if err != nil {
-					log.Errorf("fetchLockDepositTx: value parse to native error:%s, amount is: %s, txHash is: %s",
+					log.Errorf("fetchLockDepositTx: value parse to non native error:%s, amount is: %s, txHash is: %s",
 						err, txData.MetaData.DeliveredAmount.String(), txData.GetHash().String())
 					continue
 				}
-				amount := new(big.Int).SetUint64(uint64(native.Float() * 1000000))
 				sink := common.NewZeroCopySink(nil)
 				sink.WriteVarBytes(dstAddress)
-				sink.WriteString(amount.String())
+				sink.WriteString(nonNative.String())
 
 				param := &common2.MakeTxParam{
 					TxHash:              txData.GetHash().Bytes(),
@@ -383,6 +443,21 @@ func (v *Voter) commitVote(height uint32, value []byte, txhash []byte) (string, 
 	} else {
 		log.Infof("commitVote - send transaction to poly chain: ( poly_txhash: %s, side_txhash: %s, height: %d )",
 			tx.ToHexString(), hex.EncodeToString(txhash), height)
+		return tx.ToHexString(), nil
+	}
+}
+
+func (v *Voter) updateFee(view uint64, fee *big.Int) (string, error) {
+	log.Infof("updateFee, fee: %d", fee.Uint64())
+	tx, err := v.polySdk.Native.Scm.UpdateFee(
+		v.conf.SideConfig.SideChainId,
+		view,
+		fee,
+		v.signer)
+	if err != nil {
+		return "", err
+	} else {
+		log.Infof("updateFee - send transaction to poly chain, poly_txhash: %s", tx.ToHexString())
 		return tx.ToHexString(), nil
 	}
 }

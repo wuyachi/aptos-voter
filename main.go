@@ -101,5 +101,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go v.StartReplenish(ctx)
+	go v.FeeScan(ctx)
 	v.StartVoter(ctx)
 }
