@@ -296,14 +296,9 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 			}
 
 			// create args
-			nonNative, err := tx.MetaData.DeliveredAmount.NonNative()
-			if err != nil {
-				return fmt.Errorf("fetchLockDepositEventByTxHash: value parse to non native error:%s, amount is: %s, txHash is: %s",
-					err, tx.MetaData.DeliveredAmount.String(), tx.GetHash().String())
-			}
 			sink := common.NewZeroCopySink(nil)
 			sink.WriteVarBytes(dstAddress)
-			sink.WriteString(nonNative.String())
+			sink.WriteString(tx.MetaData.DeliveredAmount.String())
 
 			param := &common2.MakeTxParam{
 				TxHash:              tx.GetHash().Bytes(),
@@ -385,15 +380,9 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 				}
 
 				// create args
-				nonNative, err := txData.MetaData.DeliveredAmount.NonNative()
-				if err != nil {
-					log.Errorf("fetchLockDepositTx: value parse to non native error:%s, amount is: %s, txHash is: %s",
-						err, txData.MetaData.DeliveredAmount.String(), txData.GetHash().String())
-					continue
-				}
 				sink := common.NewZeroCopySink(nil)
 				sink.WriteVarBytes(dstAddress)
-				sink.WriteString(nonNative.String())
+				sink.WriteString(txData.MetaData.DeliveredAmount.String())
 
 				param := &common2.MakeTxParam{
 					TxHash:              txData.GetHash().Bytes(),
