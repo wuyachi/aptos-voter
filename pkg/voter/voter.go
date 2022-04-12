@@ -163,7 +163,7 @@ func (v *Voter) StartVoter(ctx context.Context) {
 				log.Infof("handling side height:%d", nextSideHeight)
 				err = v.fetchLockDepositTx(nextSideHeight)
 				if err != nil {
-					log.Errorf("fetchLockDepositEvents failed:%v", err)
+					log.Errorf("fetchLockDepositTx failed:%v", err)
 					sleep()
 					continue
 				}
@@ -265,7 +265,7 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 			raw, _ := v.polySdk.GetStorage(autils.CrossChainManagerContractAddress.ToHexString(),
 				append(append([]byte(common2.DONE_TX), autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)...), tx.GetHash().Bytes()...))
 			if len(raw) != 0 {
-				log.Infof("fetchLockDepositEvents - ccid %s (tx_hash: %s) already on poly",
+				log.Infof("fetchLockDepositEventByTxHash - ccid %s (tx_hash: %s) already on poly",
 					hex.EncodeToString(tx.GetHash().Bytes()), hex.EncodeToString(tx.GetHash().Bytes()))
 				return nil
 			}
@@ -289,16 +289,30 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 			if dstChainId == 0 || l == 0 {
 				return fmt.Errorf("fetchLockDepositEventByTxHash: cross chain info is empty, txHash is: %s", tx.GetHash().String())
 			}
-			toContractAddress, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(), []byte{})
-			if err != nil {
-				return fmt.Errorf("fetchLockDepositTx: get to asset contract address error:%s, dst chain id: %d, txHash is: %s",
-					err, dstChainId, tx.GetHash().String())
-			}
 
 			// create args
+			nonNative, err := tx.MetaData.DeliveredAmount.NonNative()
+			if err != nil {
+				return fmt.Errorf("txData.MetaData.DeliveredAmount.NonNative() err: %v", err)
+			}
+			amount, ok := new(big.Int).SetString(nonNative.String(), 10)
+			if !ok {
+				return fmt.Errorf("convert amount to big int failed")
+			}
 			sink := common.NewZeroCopySink(nil)
 			sink.WriteVarBytes(dstAddress)
-			sink.WriteString(tx.MetaData.DeliveredAmount.String())
+			// fulfill 32 bytes with 0
+			temp := common.NewZeroCopySink(nil)
+			temp.WriteVarUint(amount.Uint64())
+			amountBytes := [32]byte{}
+			copy(amountBytes[:], temp.Bytes())
+			sink.WriteBytes(amountBytes[:])
+
+			// get toContractAddress
+			toContractAddress, err := v.GetToContractAddress(dstChainId)
+			if err != nil {
+				return fmt.Errorf("v.GetToContractAddress error: %v", err)
+			}
 
 			param := &common2.MakeTxParam{
 				TxHash:              tx.GetHash().Bytes(),
@@ -317,13 +331,11 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 			var txHash string
 			txHash, err = v.commitVote(tx.LedgerSequence, sink2.Bytes(), param.TxHash)
 			if err != nil {
-				log.Errorf("commitVote failed:%v", err)
-				return err
+				return fmt.Errorf("commitVote failed:%v", err)
 			}
 			err = v.waitTx(txHash)
 			if err != nil {
-				log.Errorf("waitTx failed:%v", err)
-				return err
+				return fmt.Errorf("waitTx failed:%v", err)
 			}
 		}
 	}
@@ -347,7 +359,7 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 				raw, _ := v.polySdk.GetStorage(autils.CrossChainManagerContractAddress.ToHexString(),
 					append(append([]byte(common2.DONE_TX), autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)...), txData.GetHash().Bytes()...))
 				if len(raw) != 0 {
-					log.Infof("fetchLockDepositEvents - ccid %s (tx_hash: %s) already on poly",
+					log.Infof("fetchLockDepositTx - ccid %s (tx_hash: %s) already on poly",
 						hex.EncodeToString(txData.GetHash().Bytes()), hex.EncodeToString(txData.GetHash().Bytes()))
 					return nil
 				}
@@ -372,17 +384,30 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 					log.Errorf("fetchLockDepositTx: cross chain info is empty, txHash is: %s", txData.GetHash().String())
 					continue
 				}
-				toContractAddress, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(), []byte{})
-				if err != nil {
-					log.Errorf("fetchLockDepositTx: get to asset contract address error:%s, dst chain id: %d, txHash is: %s",
-						err, dstChainId, txData.GetHash().String())
-					continue
-				}
 
 				// create args
+				nonNative, err := txData.MetaData.DeliveredAmount.NonNative()
+				if err != nil {
+					return fmt.Errorf("txData.MetaData.DeliveredAmount.NonNative() err: %v", err)
+				}
+				amount, ok := new(big.Int).SetString(nonNative.String(), 10)
+				if !ok {
+					return fmt.Errorf("convert amount to big int failed")
+				}
 				sink := common.NewZeroCopySink(nil)
 				sink.WriteVarBytes(dstAddress)
-				sink.WriteString(txData.MetaData.DeliveredAmount.String())
+				// fulfill 32 bytes with 0
+				temp := common.NewZeroCopySink(nil)
+				temp.WriteVarUint(amount.Uint64())
+				amountBytes := [32]byte{}
+				copy(amountBytes[:], temp.Bytes())
+				sink.WriteBytes(amountBytes[:])
+
+				// get toContractAddress
+				toContractAddress, err := v.GetToContractAddress(dstChainId)
+				if err != nil {
+					return fmt.Errorf("v.GetToContractAddress error: %v", err)
+				}
 
 				param := &common2.MakeTxParam{
 					TxHash:              txData.GetHash().Bytes(),
@@ -401,13 +426,11 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 				var txHash string
 				txHash, err = v.commitVote(height, sink2.Bytes(), param.TxHash)
 				if err != nil {
-					log.Errorf("commitVote failed:%v", err)
-					return err
+					return fmt.Errorf("commitVote failed:%v", err)
 				}
 				err = v.waitTx(txHash)
 				if err != nil {
-					log.Errorf("waitTx failed:%v", err)
-					return err
+					return fmt.Errorf("waitTx failed:%v", err)
 				}
 			}
 		}
@@ -468,9 +491,37 @@ func (v *Voter) waitTx(txHash string) (err error) {
 	}
 }
 
+func (v *Voter) GetToContractAddress(toChainId uint64) ([]byte, error) {
+	fromChainIDBytes := autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)
+	fromAsset, err := data.NewAccountFromAddress(v.conf.SideConfig.MultisignAccount)
+	if err != nil {
+		return nil, fmt.Errorf("GetToContractAddress, data.NewAccountFromAddress error: %v", err)
+	}
+	assetName, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(),
+		append(append([]byte(side_chain_manager.ASSET_MAP_INDEX), fromChainIDBytes...), fromAsset[:]...))
+	if err != nil {
+		return nil, fmt.Errorf("GetToContractAddress, get asset name error: %v", err)
+	}
+
+	assetMapStore, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(),
+		append([]byte(side_chain_manager.ASSET_MAP), assetName...))
+	if err != nil {
+		return nil, fmt.Errorf("GetToContractAddress, get asset map error: %v", err)
+	}
+	assetMap := &side_chain_manager.RegisterAssetParam{
+		AssetMap: make(map[uint64][]byte),
+	}
+	err = assetMap.Deserialization(common.NewZeroCopySource(assetMapStore))
+	if err != nil {
+		return nil, fmt.Errorf("GetToContractAddress, deserialize asset map err:%v", err)
+	}
+	return assetMap.AssetMap[toChainId], nil
+}
+
 func sleep() {
 	time.Sleep(time.Second)
 }
+
 func randIdx(size int) int {
 	return int(rand.Uint32()) % size
 }
