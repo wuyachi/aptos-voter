@@ -290,6 +290,12 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 				return fmt.Errorf("fetchLockDepositEventByTxHash: cross chain info is empty, txHash is: %s", tx.GetHash().String())
 			}
 
+			// get toContractAddress
+			assetBind, err := v.GetAssetBind()
+			if err != nil {
+				return fmt.Errorf("v.GetToContractAddress error: %v", err)
+			}
+
 			// create args
 			nonNative, err := tx.MetaData.DeliveredAmount.NonNative()
 			if err != nil {
@@ -300,26 +306,21 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 				return fmt.Errorf("convert amount to big int failed")
 			}
 			sink := common.NewZeroCopySink(nil)
+			sink.WriteVarBytes(assetBind.AssetMap[dstChainId])
 			sink.WriteVarBytes(dstAddress)
 			// fulfill 32 bytes with 0
 			temp := common.NewZeroCopySink(nil)
-			temp.WriteVarUint(amount.Uint64())
+			temp.WriteUint64(amount.Uint64())
 			amountBytes := [32]byte{}
 			copy(amountBytes[:], temp.Bytes())
 			sink.WriteBytes(amountBytes[:])
-
-			// get toContractAddress
-			toContractAddress, err := v.GetToContractAddress(dstChainId)
-			if err != nil {
-				return fmt.Errorf("v.GetToContractAddress error: %v", err)
-			}
 
 			param := &common2.MakeTxParam{
 				TxHash:              tx.GetHash().Bytes(),
 				CrossChainID:        tx.GetHash().Bytes(),
 				FromContractAddress: payment.Destination[:],
 				ToChainID:           dstChainId,
-				ToContractAddress:   toContractAddress,
+				ToContractAddress:   assetBind.LockProxyMap[dstChainId],
 				Method:              "unlock",
 				Args:                sink.Bytes(),
 			}
@@ -385,6 +386,12 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 					continue
 				}
 
+				// get toContractAddress
+				assetBind, err := v.GetAssetBind()
+				if err != nil {
+					return fmt.Errorf("v.GetToContractAddress error: %v", err)
+				}
+
 				// create args
 				nonNative, err := txData.MetaData.DeliveredAmount.NonNative()
 				if err != nil {
@@ -395,26 +402,21 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 					return fmt.Errorf("convert amount to big int failed")
 				}
 				sink := common.NewZeroCopySink(nil)
+				sink.WriteVarBytes(assetBind.AssetMap[dstChainId])
 				sink.WriteVarBytes(dstAddress)
 				// fulfill 32 bytes with 0
 				temp := common.NewZeroCopySink(nil)
-				temp.WriteVarUint(amount.Uint64())
+				temp.WriteUint64(amount.Uint64())
 				amountBytes := [32]byte{}
 				copy(amountBytes[:], temp.Bytes())
 				sink.WriteBytes(amountBytes[:])
-
-				// get toContractAddress
-				toContractAddress, err := v.GetToContractAddress(dstChainId)
-				if err != nil {
-					return fmt.Errorf("v.GetToContractAddress error: %v", err)
-				}
 
 				param := &common2.MakeTxParam{
 					TxHash:              txData.GetHash().Bytes(),
 					CrossChainID:        txData.GetHash().Bytes(),
 					FromContractAddress: payment.Destination[:],
 					ToChainID:           dstChainId,
-					ToContractAddress:   toContractAddress,
+					ToContractAddress:   assetBind.LockProxyMap[dstChainId],
 					Method:              "unlock",
 					Args:                sink.Bytes(),
 				}
@@ -491,31 +493,23 @@ func (v *Voter) waitTx(txHash string) (err error) {
 	}
 }
 
-func (v *Voter) GetToContractAddress(toChainId uint64) ([]byte, error) {
-	fromChainIDBytes := autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)
-	fromAsset, err := data.NewAccountFromAddress(v.conf.SideConfig.MultisignAccount)
-	if err != nil {
-		return nil, fmt.Errorf("GetToContractAddress, data.NewAccountFromAddress error: %v", err)
-	}
-	assetName, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(),
-		append(append([]byte(side_chain_manager.ASSET_MAP_INDEX), fromChainIDBytes...), fromAsset[:]...))
-	if err != nil {
-		return nil, fmt.Errorf("GetToContractAddress, get asset name error: %v", err)
-	}
+func (v *Voter) GetAssetBind() (*side_chain_manager.AssetBind, error) {
+	chainIDBytes := autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)
 
 	assetMapStore, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(),
-		append([]byte(side_chain_manager.ASSET_MAP), assetName...))
+		append([]byte(side_chain_manager.ASSET_BIND), chainIDBytes...))
 	if err != nil {
-		return nil, fmt.Errorf("GetToContractAddress, get asset map error: %v", err)
+		return nil, fmt.Errorf("GetAssetBind, get asset bind error: %v", err)
 	}
-	assetMap := &side_chain_manager.RegisterAssetParam{
-		AssetMap: make(map[uint64][]byte),
+	assetBind := &side_chain_manager.AssetBind{
+		AssetMap:     make(map[uint64][]byte),
+		LockProxyMap: make(map[uint64][]byte),
 	}
-	err = assetMap.Deserialization(common.NewZeroCopySource(assetMapStore))
+	err = assetBind.Deserialization(common.NewZeroCopySource(assetMapStore))
 	if err != nil {
-		return nil, fmt.Errorf("GetToContractAddress, deserialize asset map err:%v", err)
+		return nil, fmt.Errorf("GetAssetBind, deserialize asset bind err:%v", err)
 	}
-	return assetMap.AssetMap[toChainId], nil
+	return assetBind, nil
 }
 
 func sleep() {
