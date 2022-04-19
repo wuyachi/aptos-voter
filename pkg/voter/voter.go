@@ -23,7 +23,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/polynetwork/poly/native/service/governance/side_chain_manager"
 	"math/big"
 	"math/rand"
 	"time"
@@ -32,6 +31,7 @@ import (
 	"github.com/polynetwork/poly/common"
 	"github.com/polynetwork/poly/core/types"
 	common2 "github.com/polynetwork/poly/native/service/cross_chain_manager/common"
+	"github.com/polynetwork/poly/native/service/governance/side_chain_manager"
 	autils "github.com/polynetwork/poly/native/service/utils"
 	ripplesdk "github.com/polynetwork/ripple-sdk"
 	"github.com/polynetwork/ripple-voter/config"
@@ -290,12 +290,6 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 				return fmt.Errorf("fetchLockDepositEventByTxHash: cross chain info is empty, txHash is: %s", tx.GetHash().String())
 			}
 
-			// get toContractAddress
-			assetBind, err := v.GetAssetBind()
-			if err != nil {
-				return fmt.Errorf("v.GetToContractAddress error: %v", err)
-			}
-
 			// create args
 			nonNative, err := tx.MetaData.DeliveredAmount.NonNative()
 			if err != nil {
@@ -306,21 +300,14 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 				return fmt.Errorf("convert amount to big int failed")
 			}
 			sink := common.NewZeroCopySink(nil)
-			sink.WriteVarBytes(assetBind.AssetMap[dstChainId])
 			sink.WriteVarBytes(dstAddress)
-			// fulfill 32 bytes with 0
-			temp := common.NewZeroCopySink(nil)
-			temp.WriteUint64(amount.Uint64())
-			amountBytes := [32]byte{}
-			copy(amountBytes[:], temp.Bytes())
-			sink.WriteBytes(amountBytes[:])
+			sink.WriteUint64(amount.Uint64())
 
 			param := &common2.MakeTxParam{
 				TxHash:              tx.GetHash().Bytes(),
 				CrossChainID:        tx.GetHash().Bytes(),
 				FromContractAddress: payment.Destination[:],
 				ToChainID:           dstChainId,
-				ToContractAddress:   assetBind.LockProxyMap[dstChainId],
 				Method:              "unlock",
 				Args:                sink.Bytes(),
 			}
@@ -329,12 +316,12 @@ func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 			param.Serialization(sink2)
 
 			// commit vote
-			var txHash string
-			txHash, err = v.commitVote(tx.LedgerSequence, sink2.Bytes(), param.TxHash)
+			var hash string
+			hash, err = v.commitVote(tx.LedgerSequence, sink2.Bytes(), param.TxHash)
 			if err != nil {
 				return fmt.Errorf("commitVote failed:%v", err)
 			}
-			err = v.waitTx(txHash)
+			err = v.waitTx(hash)
 			if err != nil {
 				return fmt.Errorf("waitTx failed:%v", err)
 			}
@@ -386,12 +373,6 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 					continue
 				}
 
-				// get toContractAddress
-				assetBind, err := v.GetAssetBind()
-				if err != nil {
-					return fmt.Errorf("v.GetToContractAddress error: %v", err)
-				}
-
 				// create args
 				nonNative, err := txData.MetaData.DeliveredAmount.NonNative()
 				if err != nil {
@@ -402,21 +383,14 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 					return fmt.Errorf("convert amount to big int failed")
 				}
 				sink := common.NewZeroCopySink(nil)
-				sink.WriteVarBytes(assetBind.AssetMap[dstChainId])
 				sink.WriteVarBytes(dstAddress)
-				// fulfill 32 bytes with 0
-				temp := common.NewZeroCopySink(nil)
-				temp.WriteUint64(amount.Uint64())
-				amountBytes := [32]byte{}
-				copy(amountBytes[:], temp.Bytes())
-				sink.WriteBytes(amountBytes[:])
+				sink.WriteUint64(amount.Uint64())
 
 				param := &common2.MakeTxParam{
 					TxHash:              txData.GetHash().Bytes(),
 					CrossChainID:        txData.GetHash().Bytes(),
 					FromContractAddress: payment.Destination[:],
 					ToChainID:           dstChainId,
-					ToContractAddress:   assetBind.LockProxyMap[dstChainId],
 					Method:              "unlock",
 					Args:                sink.Bytes(),
 				}
@@ -491,25 +465,6 @@ func (v *Voter) waitTx(txHash string) (err error) {
 		}
 		return
 	}
-}
-
-func (v *Voter) GetAssetBind() (*side_chain_manager.AssetBind, error) {
-	chainIDBytes := autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)
-
-	assetMapStore, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(),
-		append([]byte(side_chain_manager.ASSET_BIND), chainIDBytes...))
-	if err != nil {
-		return nil, fmt.Errorf("GetAssetBind, get asset bind error: %v", err)
-	}
-	assetBind := &side_chain_manager.AssetBind{
-		AssetMap:     make(map[uint64][]byte),
-		LockProxyMap: make(map[uint64][]byte),
-	}
-	err = assetBind.Deserialization(common.NewZeroCopySource(assetMapStore))
-	if err != nil {
-		return nil, fmt.Errorf("GetAssetBind, deserialize asset bind err:%v", err)
-	}
-	return assetBind, nil
 }
 
 func sleep() {
