@@ -131,6 +131,9 @@ func (v *Voter) StartReplenish(ctx context.Context) {
 				}
 				nextPolyHeight++
 			}
+		case <-ctx.Done():
+			log.Info("quiting from signal...")
+			return
 		}
 	}
 }
