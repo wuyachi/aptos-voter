@@ -5,9 +5,9 @@ go 1.17
 require (
 	github.com/boltdb/bolt v1.3.1
 	github.com/howeyc/gopass v0.0.0-20190910152052-7cb4b85ec19c
-	github.com/polynetwork/poly v1.8.4-0.20220310043944-b07dfc3df5f8
-	github.com/polynetwork/poly-go-sdk v0.0.0-20220126075452-e5c053a49c0a
-	github.com/polynetwork/ripple-sdk v1.0.0
+	github.com/polynetwork/poly v1.9.1-0.20220424092935-f54fa45801fe
+	github.com/polynetwork/poly-go-sdk v0.0.0-20220425024155-af1927301211
+	github.com/polynetwork/ripple-sdk v0.0.0-20220424031403-3947f2e7636c
 	github.com/rubblelabs/ripple v0.0.0-20220222071018-38c1a8b14c18
 )
 
@@ -38,9 +38,6 @@ require (
 )
 
 replace (
-	github.com/polynetwork/poly v1.8.4-0.20220310043944-b07dfc3df5f8 => /Users/zhangmenghang/Documents/gopath/src/github.com/polynetwork/poly
-	github.com/polynetwork/poly-go-sdk v0.0.0-20220126075452-e5c053a49c0a => /Users/zhangmenghang/Documents/gopath/src/github.com/polynetwork/poly-go-sdk
-	github.com/polynetwork/ripple-sdk v1.0.0 => /Users/zhangmenghang/Documents/gopath/src/github.com/siovanus/ripple-sdk
-	github.com/rubblelabs/ripple v0.0.0-20220222071018-38c1a8b14c18 => /Users/zhangmenghang/Documents/gopath/src/github.com/siovanus/ripple
+	github.com/rubblelabs/ripple v0.0.0-20220222071018-38c1a8b14c18 => github.com/siovanus/ripple v0.0.0-20220406100637-81f6afe283d9
 	github.com/tendermint/tm-db/064 => github.com/tendermint/tm-db v0.6.4
 )
