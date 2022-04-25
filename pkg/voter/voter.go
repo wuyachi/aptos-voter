@@ -76,7 +76,7 @@ func (v *Voter) StartReplenish(ctx context.Context) {
 		nextPolyHeight = uint64(h)
 		log.Infof("start from current poly height:%d", h)
 	}
-	ticker := time.NewTicker(time.Second * 1)
+	ticker := time.NewTicker(time.Second * 2)
 	for {
 		select {
 		case <-ticker.C:
@@ -143,7 +143,7 @@ func (v *Voter) StartVoter(ctx context.Context) {
 	if v.conf.ForceConfig.SideHeight > 0 {
 		nextSideHeight = v.conf.ForceConfig.SideHeight
 	}
-	ticker := time.NewTicker(time.Second * 1)
+	ticker := time.NewTicker(time.Second * 2)
 	for {
 		select {
 		case <-ticker.C:
@@ -153,6 +153,7 @@ func (v *Voter) StartVoter(ctx context.Context) {
 				continue
 			}
 			log.Infof("current ripple height:%d", height)
+			log.CheckRotateLogFile()
 			if height < nextSideHeight+v.conf.SideConfig.BlocksToWait+1 {
 				continue
 			}
