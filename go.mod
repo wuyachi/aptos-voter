@@ -38,6 +38,6 @@ require (
 )
 
 replace (
-	github.com/rubblelabs/ripple v0.0.0-20220222071018-38c1a8b14c18 => github.com/siovanus/ripple v0.0.0-20220406100637-81f6afe283d9
+	github.com/rubblelabs/ripple v0.0.0-20220222071018-38c1a8b14c18 => github.com/siovanus/ripple v0.0.0-20220621020209-3cb553051c63
 	github.com/tendermint/tm-db/064 => github.com/tendermint/tm-db v0.6.4
 )
