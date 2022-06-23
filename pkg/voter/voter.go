@@ -22,6 +22,7 @@ package voter
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"math/rand"
@@ -257,7 +258,14 @@ type CrossTransfer struct {
 func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
 	tx, err := v.rippleSdk.GetRpcClient().GetTx(txHash)
 	if err != nil {
-		return fmt.Errorf("fetchLockDepositEventByTxHash: cannot get tx %s info, err: %s", txHash, err)
+		return fmt.Errorf("fetchLockDepositEventByTxHash, cannot get tx %s info, err: %s", txHash, err)
+	}
+	height, err := v.rippleSdk.GetRpcClient().GetCurrentHeight()
+	if err != nil {
+		return fmt.Errorf("fetchLockDepositEventByTxHash, ripple GetCurrentHeight failed:%v", err)
+	}
+	if tx.LedgerSequence+v.conf.SideConfig.BlocksToWait > height {
+		return fmt.Errorf("fetchLockDepositEventByTxHash, tx is not confirmed yet")
 	}
 
 	if tx.MetaData.TransactionResult.Success() { // tx status is success
@@ -358,22 +366,23 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 
 				// tx is deposit payment
 				// parse cross chain info
-				var dstChainId uint64
-				var dstAddress []byte
-				for _, memo := range payment.Memos {
-					//636861696E6964 means chainid
-					if memo.Memo.MemoType.String() == "636861696E6964" {
-						id := new(big.Int).SetBytes(memo.Memo.MemoData.Bytes())
-						dstChainId = id.Uint64()
-					}
-					//61646472657373 means address
-					if memo.Memo.MemoType.String() == "61646472657373" {
-						dstAddress = memo.Memo.MemoData.Bytes()
-					}
+				if len(payment.Memos) != 1 {
+					log.Errorf("fetchLockDepositTx: cross chain info is illegal, txHash is: %s", txData.GetHash().String())
+					continue
 				}
-				l := len(dstAddress)
-				if dstChainId == 0 || l == 0 {
-					log.Errorf("fetchLockDepositTx: cross chain info is empty, txHash is: %s", txData.GetHash().String())
+				type CrossChainInfo struct {
+					DstChain   uint64
+					DstAddress string
+				}
+				crossChainInfo := new(CrossChainInfo)
+				err = json.Unmarshal(payment.Memos[0].Memo.MemoData.Bytes(), crossChainInfo)
+				if err != nil {
+					log.Errorf("fetchLockDepositTx: deserialize cross chain info error: %v, txHash is: %s", err, txData.GetHash().String())
+					continue
+				}
+				dstAddress, err := hex.DecodeString(crossChainInfo.DstAddress)
+				if err != nil {
+					log.Errorf("fetchLockDepositTx: deserialize dstAddress error: %v, txHash is: %s", err, txData.GetHash().String())
 					continue
 				}
 
@@ -394,7 +403,7 @@ func (v *Voter) fetchLockDepositTx(height uint32) error {
 					TxHash:              txData.GetHash().Bytes(),
 					CrossChainID:        txData.GetHash().Bytes(),
 					FromContractAddress: payment.Destination[:],
-					ToChainID:           dstChainId,
+					ToChainID:           crossChainInfo.DstChain,
 					Method:              "unlock",
 					Args:                sink.Bytes(),
 				}
