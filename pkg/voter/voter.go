@@ -22,36 +22,36 @@ package voter
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"math/big"
-	"math/rand"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
+	aptossdk "github.com/polynetwork/aptos-go-sdk/client"
 	sdk "github.com/polynetwork/poly-go-sdk"
 	"github.com/polynetwork/poly/common"
 	"github.com/polynetwork/poly/core/types"
 	common2 "github.com/polynetwork/poly/native/service/cross_chain_manager/common"
-	"github.com/polynetwork/poly/native/service/governance/side_chain_manager"
 	autils "github.com/polynetwork/poly/native/service/utils"
-	ripplesdk "github.com/polynetwork/ripple-sdk"
 	"github.com/polynetwork/ripple-voter/config"
 	"github.com/polynetwork/ripple-voter/pkg/db"
 	"github.com/polynetwork/ripple-voter/pkg/log"
-	"github.com/rubblelabs/ripple/data"
 )
 
 type Voter struct {
-	polySdk          *sdk.PolySdk
-	signer           *sdk.Account
-	rippleSdk        *ripplesdk.RippleSdk
-	conf             *config.Config
-	bdb              *db.BoltDB
-	multisignAccount string
+	polySdk *sdk.PolySdk
+	signer  *sdk.Account
+	clients []aptossdk.AptosClient
+	conf    *config.Config
+	bdb     *db.BoltDB
+	idx     int
+	mutex   sync.Mutex
 }
 
-func New(polySdk *sdk.PolySdk, rippleSdk *ripplesdk.RippleSdk, signer *sdk.Account, conf *config.Config) *Voter {
-	return &Voter{polySdk: polySdk, rippleSdk: rippleSdk, signer: signer, conf: conf}
+func New(polySdk *sdk.PolySdk, signer *sdk.Account, conf *config.Config) *Voter {
+	return &Voter{polySdk: polySdk, signer: signer, conf: conf}
 }
 
 func (v *Voter) Init() (err error) {
@@ -60,8 +60,11 @@ func (v *Voter) Init() (err error) {
 		return
 	}
 	v.bdb = bdb
-	v.multisignAccount = v.conf.SideConfig.MultisignAccount
-
+	var clients []aptossdk.AptosClient
+	for _, node := range v.conf.SideConfig.RestURL {
+		aptosSdk := aptossdk.NewAptosClient(node)
+		clients = append(clients, aptosSdk)
+	}
 	return
 }
 
@@ -77,7 +80,7 @@ func (v *Voter) StartReplenish(ctx context.Context) {
 		nextPolyHeight = uint64(h)
 		log.Infof("start from current poly height:%d", h)
 	}
-	ticker := time.NewTicker(time.Second * 2)
+	ticker := time.NewTicker(time.Second)
 	for {
 		select {
 		case <-ticker.C:
@@ -124,9 +127,11 @@ func (v *Voter) StartReplenish(ctx context.Context) {
 				}
 
 				for _, txHash := range txHashList {
-					err = v.fetchLockDepositEventByTxHash(txHash.(string))
+					err = v.fetchLockDepositEventByTxHash(ctx, txHash.(string))
 					if err != nil {
 						log.Errorf("fetchLockDepositEventByTxHash failed:%v", err)
+						v.changeEndpoint()
+						sleep()
 						continue
 					}
 				}
@@ -140,44 +145,39 @@ func (v *Voter) StartReplenish(ctx context.Context) {
 }
 
 func (v *Voter) StartVoter(ctx context.Context) {
-	nextSideHeight := v.bdb.GetSideHeight()
-	if v.conf.ForceConfig.SideHeight > 0 {
-		nextSideHeight = v.conf.ForceConfig.SideHeight
+	nextSequence := v.bdb.GetSideSequence()
+	if v.conf.ForceConfig.SideSequence > 0 {
+		nextSequence = v.conf.ForceConfig.SideSequence
 	}
 	ticker := time.NewTicker(time.Second * 2)
 	for {
 		select {
 		case <-ticker.C:
-			height, err := v.rippleSdk.GetRpcClient().GetCurrentHeight()
-			if err != nil {
-				log.Errorf("ripple GetCurrentHeight failed:%v", err)
-				continue
-			}
-			log.Infof("current ripple height:%d", height)
-			log.CheckRotateLogFile()
-			if height < nextSideHeight+v.conf.SideConfig.BlocksToWait+1 {
-				continue
-			}
-
-			for nextSideHeight < height-v.conf.SideConfig.BlocksToWait-1 {
+			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 				}
-				log.Infof("handling side height:%d", nextSideHeight)
-				err = v.fetchLockDepositTx(nextSideHeight)
+				startSequence := nextSequence
+				enentNum, err := v.fetchLockDepositEvents(ctx, nextSequence)
 				if err != nil {
-					log.Errorf("fetchLockDepositTx failed:%v", err)
+					log.Errorf("fetchLockDepositEvents failed:%v", err)
+					v.changeEndpoint()
 					sleep()
 					continue
 				}
-				nextSideHeight++
-			}
 
-			err = v.bdb.UpdateSideHeight(nextSideHeight)
-			if err != nil {
-				log.Errorf("UpdateSideHeight failed:%v", err)
+				err = v.bdb.UpdateSideSequence(nextSequence)
+				if err != nil {
+					log.Errorf("UpdateSideSequence failed:%v", err)
+				}
+
+				if enentNum >= int(v.conf.SideConfig.Batch) || int(nextSequence-startSequence) < enentNum {
+					continue
+				}
+				break
+
 			}
 
 		case <-ctx.Done():
@@ -187,253 +187,122 @@ func (v *Voter) StartVoter(ctx context.Context) {
 	}
 }
 
-func (v *Voter) FeeScan(ctx context.Context) {
-	ticker := time.NewTicker(time.Second * 10)
-	for {
-		select {
-		case <-ticker.C:
-			fee, err := v.rippleSdk.GetRpcClient().GetFee()
-			if err != nil {
-				log.Errorf("FeeScan: ripple GetFee failed:%v", err)
-				continue
-			}
-			// get poly ripple fee
-			polyFee := &side_chain_manager.Fee{
-				Fee: new(big.Int),
-			}
-			raw, err := v.polySdk.GetStorage(autils.SideChainManagerContractAddress.ToHexString(),
-				append([]byte(side_chain_manager.FEE), autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)...))
-			if err != nil {
-				log.Errorf("FeeScan: poly getStorage error: %s", err)
-				continue
-			}
-			if len(raw) != 0 {
-				if err := polyFee.Deserialization(common.NewZeroCopySource(raw)); err != nil {
-					log.Errorf("FeeScan: deserialize, deserialize poly fee error: %s", err)
-					continue
-				}
-			}
-			rippleFee, err := fee.Drops.OpenLedgerFee.NonNative()
-			if err != nil {
-				log.Errorf("FeeScan: fee.Drops.OpenLedgerFee.NonNative error: %s", err)
-				continue
-			}
-			log.Infof("FeeScan: ripple fee: %s, poly fee: %s, view: %d", rippleFee.String(),
-				polyFee.Fee.String(), polyFee.View)
-
-			if uint64(rippleFee.Float()) > polyFee.Fee.Uint64()*4/5 ||
-				uint64(rippleFee.Float()) < polyFee.Fee.Uint64()/20 {
-				newFee, ok := new(big.Int).SetString(rippleFee.String(), 10)
-				if !ok {
-					log.Errorf("FeeScan: parse open ledger fee error")
-					continue
-				}
-				txHash, err := v.updateFee(polyFee.View, newFee)
-				if err != nil {
-					log.Errorf("FeeScan: updateFee failed:%v", err)
-					continue
-				}
-				err = v.waitTx(txHash)
-				if err != nil {
-					log.Errorf("FeeScan: waitTx failed:%v", err)
-					continue
-				}
-			}
-
-		case <-ctx.Done():
-			log.Info("quiting from signal...")
-			return
-		}
-	}
-}
-
-type CrossTransfer struct {
-	txIndex string
-	txId    []byte
-	value   []byte
-	toChain uint32
-	height  uint64
-}
-
-func (v *Voter) fetchLockDepositEventByTxHash(txHash string) error {
-	tx, err := v.rippleSdk.GetRpcClient().GetTx(txHash)
+func (v *Voter) fetchLockDepositEvents(ctx context.Context, nextSequence uint64) (int, error) {
+	events, err := v.clients[v.idx].GetEventsByEventKey(ctx, v.conf.SideConfig.CcmEventKey, v.conf.SideConfig.Batch, strconv.Itoa(int(nextSequence)))
 	if err != nil {
-		return fmt.Errorf("fetchLockDepositEventByTxHash, cannot get tx %s info, err: %s", txHash, err)
+		log.Errorf("aptos GetEventsByEventKey failed:%v", err)
+		v.changeEndpoint()
+		sleep()
+		return 0, err
 	}
-	height, err := v.rippleSdk.GetRpcClient().GetCurrentHeight()
-	if err != nil {
-		return fmt.Errorf("fetchLockDepositEventByTxHash, ripple GetCurrentHeight failed:%v", err)
+	if len(events) == 0 {
+		return 0, nil
 	}
-	if tx.LedgerSequence+v.conf.SideConfig.BlocksToWait > height {
-		return fmt.Errorf("fetchLockDepositEventByTxHash, tx is not confirmed yet")
-	}
+	sort.Slice(events, func(i, j int) bool {
+		x, _ := strconv.Atoi(events[i].SequenceNumber)
+		y, _ := strconv.Atoi(events[j].SequenceNumber)
+		return x < y
+	})
+	log.Infof("current aptos event sequence:%d", nextSequence)
+	log.CheckRotateLogFile()
 
-	if tx.MetaData.TransactionResult.Success() { // tx status is success
-		if payment, ok := tx.Transaction.(*data.Payment); ok && // payment tx
-			payment.Amount.Currency.Machine() == "XRP" && // payment xrp
-			payment.Memos != nil && // judge memos
-			payment.Destination.String() == v.multisignAccount {
-			// check if tx has done
+	for _, event := range events {
+		if strings.EqualFold(strings.TrimPrefix(event.Key, "0x"), strings.TrimPrefix(v.conf.SideConfig.CcmEventKey, "0x")) {
+			param := &common2.MakeTxParam{}
+			rawData, err := hex.DecodeString(event.Data["raw_data"].(string))
+			if err != nil {
+				log.Errorf("decode rawdata err: %v, version: %s, eventsequence: %s", err, event.Version, event.SequenceNumber)
+				continue
+			}
+
+			_ = param.Deserialization(common.NewZeroCopySource(rawData))
+			if !v.conf.IsWhitelistMethod(param.Method) {
+				log.Errorf("target contract method invalid %s, version: %s, eventsequence: %s", param.Method, event.Version, event.SequenceNumber)
+				continue
+			}
+
 			raw, _ := v.polySdk.GetStorage(autils.CrossChainManagerContractAddress.ToHexString(),
-				append(append([]byte(common2.DONE_TX), autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)...), tx.GetHash().Bytes()...))
+				append(append([]byte(common2.DONE_TX), autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)...), param.CrossChainID...))
+			if len(raw) != 0 {
+				log.Infof("StartVoter - ccid %s (version: %s, eventsequence: %s) already on poly",
+					hex.EncodeToString(param.CrossChainID), event.Version, event.SequenceNumber)
+				continue
+			}
+
+			//version -> tx, height -> block
+			version, err := strconv.Atoi(event.Version)
+			if err != nil {
+				log.Errorf("tx version err: %v, version: %s, txid: %v", err, event.Version, hex.EncodeToString(param.CrossChainID))
+				continue
+			}
+			txHash, err := v.commitVote(uint32(version), rawData, param.CrossChainID)
+			if err != nil {
+				log.Errorf("commitVote failed:%v, version: %s, txid: %v", err, event.Version, hex.EncodeToString(param.CrossChainID))
+				return len(events), err
+			}
+			err = v.waitTx(txHash)
+			if err != nil {
+				log.Errorf("waitTx failed:%v", err)
+				return len(events), err
+			}
+			nextSequence++
+		}
+	}
+	log.Infof("side event nextSequence: %d", nextSequence)
+	return len(events), nil
+}
+
+func (v *Voter) fetchLockDepositEventByTxHash(ctx context.Context, txHash string) error {
+	tx, err := v.clients[v.idx].GetTransactionByHash(ctx, txHash)
+	if err != nil {
+		return fmt.Errorf("fetchLockDepositEventByTxHash, cannot get tx: %s info, err: %s", txHash, err)
+	}
+	for _, event := range tx.Events {
+		if strings.EqualFold(strings.TrimPrefix(event.Key, "0x"), strings.TrimPrefix(v.conf.SideConfig.CcmEventKey, "0x")) {
+			param := &common2.MakeTxParam{}
+			rawData, err := hex.DecodeString(event.Data["raw_data"].(string))
+			if err != nil {
+				log.Errorf("decode rawdata err: %v, txHash: %s", err, txHash)
+				continue
+			}
+
+			_ = param.Deserialization(common.NewZeroCopySource(rawData))
+			if !v.conf.IsWhitelistMethod(param.Method) {
+				log.Errorf("target contract method invalid %s, txHash: %s", param.Method, txHash)
+				continue
+			}
+
+			raw, _ := v.polySdk.GetStorage(autils.CrossChainManagerContractAddress.ToHexString(),
+				append(append([]byte(common2.DONE_TX), autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)...), param.CrossChainID...))
 			if len(raw) != 0 {
 				log.Infof("fetchLockDepositEventByTxHash - ccid %s (tx_hash: %s) already on poly",
-					hex.EncodeToString(tx.GetHash().Bytes()), hex.EncodeToString(tx.GetHash().Bytes()))
-				return nil
+					hex.EncodeToString(param.CrossChainID), txHash)
+				continue
 			}
 
-			// tx is deposit payment
-			// parse cross chain info
-			if len(payment.Memos) != 1 {
-				return fmt.Errorf("fetchLockDepositEventByTxHash: cross chain info is illegal, txHash is: %s", tx.GetHash().String())
-			}
-			type CrossChainInfo struct {
-				DstChain   uint64
-				DstAddress string
-			}
-			crossChainInfo := new(CrossChainInfo)
-			err = json.Unmarshal(payment.Memos[0].Memo.MemoData.Bytes(), crossChainInfo)
+			//version -> tx, height -> block
+			version, err := strconv.Atoi(tx.Version)
 			if err != nil {
-				return fmt.Errorf("fetchLockDepositEventByTxHash: deserialize cross chain info error: %v, txHash is: %s", err, tx.GetHash().String())
+				log.Errorf("tx version err: %v, txHash: %s", err, txHash)
+				continue
 			}
-			dstAddress, err := hex.DecodeString(crossChainInfo.DstAddress)
+			txHash, err = v.commitVote(uint32(version), rawData, param.CrossChainID)
 			if err != nil {
-				return fmt.Errorf("fetchLockDepositEventByTxHash: deserialize dstAddress error: %v, txHash is: %s", err, tx.GetHash().String())
-			}
-
-			// create args
-			nonNative, err := tx.MetaData.DeliveredAmount.NonNative()
-			if err != nil {
-				return fmt.Errorf("txData.MetaData.DeliveredAmount.NonNative() err: %v", err)
-			}
-			amount, ok := new(big.Int).SetString(nonNative.String(), 10)
-			if !ok {
-				return fmt.Errorf("convert amount to big int failed")
-			}
-			sink := common.NewZeroCopySink(nil)
-			sink.WriteVarBytes(dstAddress)
-			sink.WriteUint64(amount.Uint64())
-
-			param := &common2.MakeTxParam{
-				TxHash:              tx.GetHash().Bytes(),
-				CrossChainID:        tx.GetHash().Bytes(),
-				FromContractAddress: payment.Destination[:],
-				ToChainID:           crossChainInfo.DstChain,
-				Method:              "unlock",
-				Args:                sink.Bytes(),
-			}
-
-			sink2 := common.NewZeroCopySink(nil)
-			param.Serialization(sink2)
-
-			// commit vote
-			var hash string
-			hash, err = v.commitVote(tx.LedgerSequence, sink2.Bytes(), param.TxHash)
-			if err != nil {
-				return fmt.Errorf("commitVote failed:%v", err)
-			}
-			err = v.waitTx(hash)
-			if err != nil {
-				return fmt.Errorf("waitTx failed:%v", err)
+				log.Errorf("commitVote failed:%v", err)
+				continue
 			}
 		}
 	}
-	return nil
-}
-
-func (v *Voter) fetchLockDepositTx(height uint32) error {
-	ledger, err := v.rippleSdk.GetRpcClient().GetLedger(height)
-	if err != nil {
-		return fmt.Errorf("fetchDepositTx: cannot get leger %d info, err: %s", height, err)
-	}
-	empty := true
-	for _, txData := range ledger.Ledger.Transactions {
-		if txData.MetaData.TransactionResult.Success() { // tx status is success
-			if payment, ok := txData.Transaction.(*data.Payment); ok && // payment tx
-				payment.Amount.Currency.Machine() == "XRP" && // payment xrp
-				payment.Memos != nil && // judge memos
-				payment.Destination.String() == v.multisignAccount {
-				empty = false
-				// check if tx has done
-				raw, _ := v.polySdk.GetStorage(autils.CrossChainManagerContractAddress.ToHexString(),
-					append(append([]byte(common2.DONE_TX), autils.GetUint64Bytes(v.conf.SideConfig.SideChainId)...), txData.GetHash().Bytes()...))
-				if len(raw) != 0 {
-					log.Infof("fetchLockDepositTx - ccid %s (tx_hash: %s) already on poly",
-						hex.EncodeToString(txData.GetHash().Bytes()), hex.EncodeToString(txData.GetHash().Bytes()))
-					return nil
-				}
-
-				// tx is deposit payment
-				// parse cross chain info
-				if len(payment.Memos) != 1 {
-					log.Errorf("fetchLockDepositTx: cross chain info is illegal, txHash is: %s", txData.GetHash().String())
-					continue
-				}
-				type CrossChainInfo struct {
-					DstChain   uint64
-					DstAddress string
-				}
-				crossChainInfo := new(CrossChainInfo)
-				err = json.Unmarshal(payment.Memos[0].Memo.MemoData.Bytes(), crossChainInfo)
-				if err != nil {
-					log.Errorf("fetchLockDepositTx: deserialize cross chain info error: %v, txHash is: %s", err, txData.GetHash().String())
-					continue
-				}
-				dstAddress, err := hex.DecodeString(crossChainInfo.DstAddress)
-				if err != nil {
-					log.Errorf("fetchLockDepositTx: deserialize dstAddress error: %v, txHash is: %s", err, txData.GetHash().String())
-					continue
-				}
-
-				// create args
-				nonNative, err := txData.MetaData.DeliveredAmount.NonNative()
-				if err != nil {
-					return fmt.Errorf("txData.MetaData.DeliveredAmount.NonNative() err: %v", err)
-				}
-				amount, ok := new(big.Int).SetString(nonNative.String(), 10)
-				if !ok {
-					return fmt.Errorf("convert amount to big int failed")
-				}
-				sink := common.NewZeroCopySink(nil)
-				sink.WriteVarBytes(dstAddress)
-				sink.WriteUint64(amount.Uint64())
-
-				param := &common2.MakeTxParam{
-					TxHash:              txData.GetHash().Bytes(),
-					CrossChainID:        txData.GetHash().Bytes(),
-					FromContractAddress: payment.Destination[:],
-					ToChainID:           crossChainInfo.DstChain,
-					Method:              "unlock",
-					Args:                sink.Bytes(),
-				}
-
-				sink2 := common.NewZeroCopySink(nil)
-				param.Serialization(sink2)
-
-				// commit vote
-				var txHash string
-				txHash, err = v.commitVote(height, sink2.Bytes(), param.TxHash)
-				if err != nil {
-					return fmt.Errorf("commitVote failed:%v", err)
-				}
-				err = v.waitTx(txHash)
-				if err != nil {
-					return fmt.Errorf("waitTx failed:%v", err)
-				}
-			}
-		}
-	}
-	log.Infof("side height %d empty: %v", height, empty)
 
 	return nil
 }
 
-func (v *Voter) commitVote(height uint32, value []byte, txhash []byte) (string, error) {
-	log.Infof("commitVote, height: %d, value: %s, txhash: %s", height, hex.EncodeToString(value), hex.EncodeToString(txhash))
+func (v *Voter) commitVote(version uint32, value []byte, txid []byte) (string, error) {
+	log.Infof("commitVote, version: %d, value: %s, txid: %s", version, hex.EncodeToString(value), hex.EncodeToString(txid))
 	tx, err := v.polySdk.Native.Ccm.ImportOuterTransfer(
 		v.conf.SideConfig.SideChainId,
 		value,
-		height,
+		version,
 		nil,
 		v.signer.Address[:],
 		[]byte{},
@@ -441,23 +310,8 @@ func (v *Voter) commitVote(height uint32, value []byte, txhash []byte) (string, 
 	if err != nil {
 		return "", err
 	} else {
-		log.Infof("commitVote - send transaction to poly chain: ( poly_txhash: %s, side_txhash: %s, height: %d )",
-			tx.ToHexString(), hex.EncodeToString(txhash), height)
-		return tx.ToHexString(), nil
-	}
-}
-
-func (v *Voter) updateFee(view uint64, fee *big.Int) (string, error) {
-	log.Infof("updateFee, fee: %d", fee.Uint64())
-	tx, err := v.polySdk.Native.Scm.UpdateFee(
-		v.conf.SideConfig.SideChainId,
-		view,
-		fee,
-		v.signer)
-	if err != nil {
-		return "", err
-	} else {
-		log.Infof("updateFee - send transaction to poly chain, poly_txhash: %s", tx.ToHexString())
+		log.Infof("commitVote - send transaction to poly chain: ( poly_txhash: %s, side_txid: %s, side_version: %d )",
+			tx.ToHexString(), hex.EncodeToString(txid), version)
 		return tx.ToHexString(), nil
 	}
 }
@@ -483,6 +337,15 @@ func sleep() {
 	time.Sleep(time.Second)
 }
 
-func randIdx(size int) int {
-	return int(rand.Uint32()) % size
+func (v *Voter) changeEndpoint() {
+	v.mutex.Lock()
+	defer func() {
+		v.mutex.Unlock()
+	}()
+	if v.idx == len(v.clients)-1 {
+		v.idx = 0
+	} else {
+		v.idx = v.idx + 1
+	}
+	log.Infof("change endpoint to %d", v.idx)
 }

@@ -29,7 +29,6 @@ import (
 
 	"github.com/howeyc/gopass"
 	sdk "github.com/polynetwork/poly-go-sdk"
-	ripplesdk "github.com/polynetwork/ripple-sdk"
 	"github.com/polynetwork/ripple-voter/config"
 	"github.com/polynetwork/ripple-voter/pkg/log"
 	"github.com/polynetwork/ripple-voter/pkg/voter"
@@ -89,10 +88,7 @@ func main() {
 	}
 	log.Infof("voter %s", signer.Address.ToBase58())
 
-	rippleSdk := ripplesdk.NewRippleSdk()
-	rippleSdk.NewRpcClient().SetAddress(conf.SideConfig.RestURL)
-
-	v := voter.New(polySdk, rippleSdk, signer, conf)
+	v := voter.New(polySdk, signer, conf)
 	err = v.Init()
 	if err != nil {
 		log.Fatalf("Voter.init failed: %v", err)
@@ -103,7 +99,6 @@ func main() {
 	defer stop()
 	go checkLogFile()
 	go v.StartReplenish(ctx)
-	go v.FeeScan(ctx)
 	v.StartVoter(ctx)
 }
 

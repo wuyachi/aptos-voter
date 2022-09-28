@@ -57,28 +57,28 @@ func NewBoltDB(dir string) (bdb *BoltDB, err error) {
 	return
 }
 
-func (w *BoltDB) UpdateSideHeight(h uint32) error {
+func (w *BoltDB) UpdateSideSequence(h uint64) error {
 
 	raw := make([]byte, 8)
-	binary.LittleEndian.PutUint32(raw, h)
+	binary.LittleEndian.PutUint64(raw, h)
 
 	return w.db.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket(BKTHeight)
-		return bkt.Put([]byte("side_height"), raw)
+		return bkt.Put([]byte("side_sequence"), raw)
 	})
 }
 
-func (w *BoltDB) GetSideHeight() uint32 {
+func (w *BoltDB) GetSideSequence() uint64 {
 
-	var h uint32
+	var h uint64
 	_ = w.db.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket(BKTHeight)
-		raw := bkt.Get([]byte("side_height"))
+		raw := bkt.Get([]byte("side_sequence"))
 		if len(raw) == 0 {
 			h = 0
 			return nil
 		}
-		h = binary.LittleEndian.Uint32(raw)
+		h = binary.LittleEndian.Uint64(raw)
 		return nil
 	})
 	return h

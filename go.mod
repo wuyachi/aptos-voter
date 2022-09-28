@@ -7,8 +7,7 @@ require (
 	github.com/howeyc/gopass v0.0.0-20190910152052-7cb4b85ec19c
 	github.com/polynetwork/poly v1.9.1-0.20220424092935-f54fa45801fe
 	github.com/polynetwork/poly-go-sdk v0.0.0-20220425024155-af1927301211
-	github.com/polynetwork/ripple-sdk v0.0.0-20220424031403-3947f2e7636c
-	github.com/rubblelabs/ripple v0.0.0-20220222071018-38c1a8b14c18
+	github.com/polynetwork/aptos-go-sdk  v0.0.0
 )
 
 require (
@@ -38,6 +37,6 @@ require (
 )
 
 replace (
-	github.com/rubblelabs/ripple v0.0.0-20220222071018-38c1a8b14c18 => github.com/siovanus/ripple v0.0.0-20220621020209-3cb553051c63
 	github.com/tendermint/tm-db/064 => github.com/tendermint/tm-db v0.6.4
+    github.com/polynetwork/aptos-go-sdk v0.0.0 => github.com/rain-zxn/aptos-go-sdk v0.0.0-20220928035705-7cfabb0a0203
 )

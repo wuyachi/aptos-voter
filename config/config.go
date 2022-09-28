@@ -22,13 +22,17 @@ package config
 import (
 	"encoding/json"
 	"io/ioutil"
+	"sync"
 )
 
 type Config struct {
-	PolyConfig  PolyConfig
-	SideConfig  SideConfig
-	ForceConfig ForceConfig
-	BoltDbPath  string
+	sync.Once
+	PolyConfig       PolyConfig
+	SideConfig       SideConfig
+	ForceConfig      ForceConfig
+	BoltDbPath       string
+	WhitelistMethods []string
+	whitelistMethods map[string]bool
 }
 
 type PolyConfig struct {
@@ -38,15 +42,16 @@ type PolyConfig struct {
 }
 
 type SideConfig struct {
-	SideChainId      uint64
-	MultisignAccount string
-	RestURL          string
-	BlocksToWait     uint32
+	SideChainId  uint64
+	RestURL      []string
+	BlocksToWait uint32
+	CcmEventKey  string
+	Batch        uint64
 }
 
 type ForceConfig struct {
-	SideHeight uint32
-	PolyHeight uint64
+	SideSequence uint64
+	PolyHeight   uint64
 }
 
 func LoadConfig(confFile string) (config *Config, err error) {
@@ -58,4 +63,15 @@ func LoadConfig(confFile string) (config *Config, err error) {
 	config = &Config{}
 	err = json.Unmarshal(jsonBytes, config)
 	return
+}
+
+func (c *Config) IsWhitelistMethod(method string) bool {
+	c.Do(func() {
+		c.whitelistMethods = map[string]bool{}
+		for _, m := range c.WhitelistMethods {
+			c.whitelistMethods[m] = true
+		}
+	})
+
+	return c.whitelistMethods[method]
 }
