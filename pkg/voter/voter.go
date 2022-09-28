@@ -30,14 +30,14 @@ import (
 	"time"
 
 	aptossdk "github.com/polynetwork/aptos-go-sdk/client"
+	"github.com/polynetwork/aptos-voter/config"
+	"github.com/polynetwork/aptos-voter/pkg/db"
+	"github.com/polynetwork/aptos-voter/pkg/log"
 	sdk "github.com/polynetwork/poly-go-sdk"
 	"github.com/polynetwork/poly/common"
 	"github.com/polynetwork/poly/core/types"
 	common2 "github.com/polynetwork/poly/native/service/cross_chain_manager/common"
 	autils "github.com/polynetwork/poly/native/service/utils"
-	"github.com/polynetwork/ripple-voter/config"
-	"github.com/polynetwork/ripple-voter/pkg/db"
-	"github.com/polynetwork/ripple-voter/pkg/log"
 )
 
 type Voter struct {

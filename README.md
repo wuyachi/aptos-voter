@@ -1,1 +1,1 @@
-# ripple-voter
+# aptos-voter

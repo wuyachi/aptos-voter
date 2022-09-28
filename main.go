@@ -28,10 +28,10 @@ import (
 	"time"
 
 	"github.com/howeyc/gopass"
+	"github.com/polynetwork/aptos-voter/config"
+	"github.com/polynetwork/aptos-voter/pkg/log"
+	"github.com/polynetwork/aptos-voter/pkg/voter"
 	sdk "github.com/polynetwork/poly-go-sdk"
-	"github.com/polynetwork/ripple-voter/config"
-	"github.com/polynetwork/ripple-voter/pkg/log"
-	"github.com/polynetwork/ripple-voter/pkg/voter"
 )
 
 var confFile string
