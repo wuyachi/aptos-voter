@@ -210,13 +210,13 @@ func (v *Voter) fetchLockDepositEvents(ctx context.Context, nextSequence uint64)
 	for _, event := range events {
 		if strings.EqualFold(strings.TrimPrefix(event.Key, "0x"), strings.TrimPrefix(v.conf.SideConfig.CcmEventKey, "0x")) {
 			param := &common2.MakeTxParam{}
-			rawData, err := hex.DecodeString(event.Data["raw_data"].(string))
-			if err != nil {
-				log.Errorf("decode rawdata err: %v, version: %s, eventsequence: %s", err, event.Version, event.SequenceNumber)
+			rawData, ok := event.Data["raw_data"]
+			if !ok {
+				log.Errorf("no rawdata in event.Data, version: %s, eventsequence: %s", event.Version, event.SequenceNumber)
 				continue
 			}
 
-			_ = param.Deserialization(common.NewZeroCopySource(rawData))
+			_ = param.Deserialization(common.NewZeroCopySource([]byte(rawData.(string))))
 			if !v.conf.IsWhitelistMethod(param.Method) {
 				log.Errorf("target contract method invalid %s, version: %s, eventsequence: %s", param.Method, event.Version, event.SequenceNumber)
 				continue
@@ -236,7 +236,7 @@ func (v *Voter) fetchLockDepositEvents(ctx context.Context, nextSequence uint64)
 				log.Errorf("tx version err: %v, version: %s, txid: %v", err, event.Version, hex.EncodeToString(param.CrossChainID))
 				continue
 			}
-			txHash, err := v.commitVote(uint32(version), rawData, param.CrossChainID)
+			txHash, err := v.commitVote(uint32(version), []byte(rawData.(string)), param.CrossChainID)
 			if err != nil {
 				log.Errorf("commitVote failed:%v, version: %s, txid: %v", err, event.Version, hex.EncodeToString(param.CrossChainID))
 				return len(events), err
@@ -261,13 +261,13 @@ func (v *Voter) fetchLockDepositEventByTxHash(ctx context.Context, txHash string
 	for _, event := range tx.Events {
 		if strings.EqualFold(strings.TrimPrefix(event.Key, "0x"), strings.TrimPrefix(v.conf.SideConfig.CcmEventKey, "0x")) {
 			param := &common2.MakeTxParam{}
-			rawData, err := hex.DecodeString(event.Data["raw_data"].(string))
-			if err != nil {
-				log.Errorf("decode rawdata err: %v, txHash: %s", err, txHash)
+			rawData, ok := event.Data["raw_data"]
+			if !ok {
+				log.Errorf("no rawdata in event.Data, version: %s, eventsequence: %s", event.Version, event.SequenceNumber)
 				continue
 			}
 
-			_ = param.Deserialization(common.NewZeroCopySource(rawData))
+			_ = param.Deserialization(common.NewZeroCopySource([]byte(rawData.(string))))
 			if !v.conf.IsWhitelistMethod(param.Method) {
 				log.Errorf("target contract method invalid %s, txHash: %s", param.Method, txHash)
 				continue
@@ -287,7 +287,7 @@ func (v *Voter) fetchLockDepositEventByTxHash(ctx context.Context, txHash string
 				log.Errorf("tx version err: %v, txHash: %s", err, txHash)
 				continue
 			}
-			txHash, err = v.commitVote(uint32(version), rawData, param.CrossChainID)
+			txHash, err = v.commitVote(uint32(version), []byte(rawData.(string)), param.CrossChainID)
 			if err != nil {
 				log.Errorf("commitVote failed:%v", err)
 				continue
