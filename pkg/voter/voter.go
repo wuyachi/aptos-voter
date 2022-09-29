@@ -65,6 +65,7 @@ func (v *Voter) Init() (err error) {
 		aptosSdk := aptossdk.NewAptosClient(node)
 		clients = append(clients, aptosSdk)
 	}
+	v.clients = clients
 	return
 }
 
