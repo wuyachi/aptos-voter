@@ -241,7 +241,7 @@ func (v *Voter) fetchLockDepositEvents(ctx context.Context, nextSequence uint64)
 				log.Errorf("tx version err: %v, version: %s, txid: %v", err, event.Version, hex.EncodeToString(param.CrossChainID))
 				continue
 			}
-			txHash, err := v.commitVote(uint32(version), []byte(rawData.(string)), param.CrossChainID)
+			txHash, err := v.commitVote(uint32(version), rawData, param.CrossChainID)
 			if err != nil {
 				log.Errorf("commitVote failed:%v, version: %s, txid: %v", err, event.Version, hex.EncodeToString(param.CrossChainID))
 				return len(events), err
@@ -297,7 +297,7 @@ func (v *Voter) fetchLockDepositEventByTxHash(ctx context.Context, txHash string
 				log.Errorf("tx version err: %v, txHash: %s", err, txHash)
 				continue
 			}
-			txHash, err = v.commitVote(uint32(version), []byte(rawData.(string)), param.CrossChainID)
+			txHash, err = v.commitVote(uint32(version), rawData, param.CrossChainID)
 			if err != nil {
 				log.Errorf("commitVote failed:%v", err)
 				continue
