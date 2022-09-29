@@ -210,13 +210,18 @@ func (v *Voter) fetchLockDepositEvents(ctx context.Context, nextSequence uint64)
 	for _, event := range events {
 		if strings.EqualFold(strings.TrimPrefix(event.Key, "0x"), strings.TrimPrefix(v.conf.SideConfig.CcmEventKey, "0x")) {
 			param := &common2.MakeTxParam{}
-			rawData, ok := event.Data["raw_data"]
+			raw_data, ok := event.Data["raw_data"]
 			if !ok {
 				log.Errorf("no rawdata in event.Data, version: %s, eventsequence: %s", event.Version, event.SequenceNumber)
 				continue
 			}
+			rawData, err := hex.DecodeString(raw_data.(string)[2:])
+			if err != nil {
+				log.Errorf("rawdata DecodeString err: %v, version: %s, eventsequence: %s", err, event.Version, event.SequenceNumber)
+				continue
+			}
 
-			_ = param.Deserialization(common.NewZeroCopySource([]byte(rawData.(string))))
+			_ = param.Deserialization(common.NewZeroCopySource(rawData))
 			if !v.conf.IsWhitelistMethod(param.Method) {
 				log.Errorf("target contract method invalid %s, version: %s, eventsequence: %s", param.Method, event.Version, event.SequenceNumber)
 				continue
@@ -261,13 +266,18 @@ func (v *Voter) fetchLockDepositEventByTxHash(ctx context.Context, txHash string
 	for _, event := range tx.Events {
 		if strings.EqualFold(strings.TrimPrefix(event.Key, "0x"), strings.TrimPrefix(v.conf.SideConfig.CcmEventKey, "0x")) {
 			param := &common2.MakeTxParam{}
-			rawData, ok := event.Data["raw_data"]
+			raw_data, ok := event.Data["raw_data"]
 			if !ok {
 				log.Errorf("no rawdata in event.Data, version: %s, eventsequence: %s", event.Version, event.SequenceNumber)
 				continue
 			}
+			rawData, err := hex.DecodeString(raw_data.(string)[2:])
+			if err != nil {
+				log.Errorf("rawdata DecodeString err: %v, version: %s, eventsequence: %s", err, event.Version, event.SequenceNumber)
+				continue
+			}
 
-			_ = param.Deserialization(common.NewZeroCopySource([]byte(rawData.(string))))
+			_ = param.Deserialization(common.NewZeroCopySource(rawData))
 			if !v.conf.IsWhitelistMethod(param.Method) {
 				log.Errorf("target contract method invalid %s, txHash: %s", param.Method, txHash)
 				continue
