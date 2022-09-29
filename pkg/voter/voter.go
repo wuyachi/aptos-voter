@@ -161,22 +161,22 @@ func (v *Voter) StartVoter(ctx context.Context) {
 				default:
 				}
 				startSequence := nextSequence
-				enentNum, err := v.fetchLockDepositEvents(ctx, nextSequence)
+				enentNum, err := v.fetchLockDepositEvents(ctx, startSequence)
 				if err != nil {
 					log.Errorf("fetchLockDepositEvents failed:%v", err)
 					v.changeEndpoint()
 					sleep()
 					continue
 				}
-
+				nextSequence += uint64(enentNum)
 				err = v.bdb.UpdateSideSequence(nextSequence)
 				if err != nil {
 					log.Errorf("UpdateSideSequence failed:%v", err)
 				}
 
-				if enentNum >= int(v.conf.SideConfig.Batch) || int(nextSequence-startSequence) < enentNum {
-					continue
-				}
+				//if enentNum >= int(v.conf.SideConfig.Batch) || int(nextSequence-startSequence) < enentNum {
+				//	continue
+				//}
 				break
 
 			}
