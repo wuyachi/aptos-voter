@@ -189,7 +189,7 @@ func (v *Voter) StartVoter(ctx context.Context) {
 }
 
 func (v *Voter) fetchLockDepositEvents(ctx context.Context, nextSequence uint64) (int, error) {
-	events, err := v.clients[v.idx].GetEventsByEventKey(ctx, v.conf.SideConfig.CcmEventKey, v.conf.SideConfig.Batch, strconv.Itoa(int(nextSequence)))
+	events, err := v.clients[v.idx].GetEventsByEventKey(ctx, v.conf.SideConfig.CcmEventKey, v.conf.SideConfig.Batch, nextSequence)
 	if err != nil {
 		log.Errorf("aptos GetEventsByEventKey failed:%v", err)
 		v.changeEndpoint()

@@ -102,6 +102,6 @@ require (
 )
 
 replace (
-	github.com/polynetwork/aptos-go-sdk v0.0.0 => github.com/rain-zxn/aptos-go-sdk v0.0.0-20220928035705-7cfabb0a0203
+	github.com/polynetwork/aptos-go-sdk v0.0.0 => github.com/wuyachi/aptos-go-sdk v0.0.1
 	github.com/tendermint/tm-db/064 => github.com/tendermint/tm-db v0.6.4
 )
